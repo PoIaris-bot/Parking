@@ -1,0 +1,5 @@
+<launch>
+    <node pkg="parking" type="camera.py" name="camera" output="screen">
+        <param name="cam" type="int" value="0"/>
+    </node>
+</launch>
