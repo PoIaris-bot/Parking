@@ -1,5 +1,7 @@
 <launch>
-    <node pkg="parking" type="camera.py" name="camera" output="screen">
-        <param name="cam" type="int" value="0"/>
+    <node pkg="parking" type="camera.py" name="camera">
+        <param name="cam" type="int" value="2"/>
+        <param name="img_sz" type="int" value="800"/>
     </node>
+    <node pkg="parking" type="planner.py" name="planner" output="screen"/>
 </launch>
