@@ -73,10 +73,10 @@ class Camera:
                 contours, _ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
                 contours.sort(key=lambda cnt: cv2.contourArea(cnt), reverse=True)
 
-                count = 0
+                i, count = 0, 0
                 area_centers = []
                 area_contours = []
-                for contour in contours:
+                for i, contour in enumerate(contours):  # find parking lot and lane areas
                     x, y, w, h = cv2.boundingRect(contour)
                     if x not in [0, self.raw_sz[0] - w] and y not in [0, self.raw_sz[1] - h]:
                         area_contours.append(contour)
@@ -88,7 +88,8 @@ class Camera:
                     if count == 2:
                         break
                 convex_hull = np.zeros_like(gray, dtype=np.uint8)
-                cv2.drawContours(convex_hull, [cv2.convexHull(np.vstack(area_contours))], -1, 255, cv2.FILLED)
+                convex_hull_contour = cv2.convexHull(np.vstack(area_contours))
+                cv2.drawContours(convex_hull, [convex_hull_contour], -1, 255, cv2.FILLED)
 
                 fld = cv2.ximgproc.createFastLineDetector()
                 lines = fld.detect(convex_hull).squeeze().tolist()
@@ -117,14 +118,23 @@ class Camera:
                 matrix_r = cv2.getRotationMatrix2D(
                     (self.img_sz // 2, self.img_sz // 2), angle_dict[quadrant], 1
                 )
+                for contour in contours[i + 1:]:  # find two parking spot areas
+                    x, y, w, h = cv2.boundingRect(contour)
+                    if x not in [0, self.raw_sz[0] - w] and y not in [0, self.raw_sz[1] - h]:
+                        if cv2.pointPolygonTest(convex_hull_contour, (x + w // 2, y + h // 2), False) > 0:
+                            if cv2.contourArea(contour) > w * h * 0.5:
+                                area_contours.append(contour)
+                                count += 1
+                        if count == 4:
+                            break
 
-                image = cv2.warpPerspective(frame, matrix_p, (self.img_sz, self.img_sz))
-                image = cv2.warpAffine(image, matrix_r, (self.img_sz, self.img_sz))
+                areas = np.zeros_like(gray, dtype=np.uint8)
+                cv2.drawContours(areas, area_contours, -1, 255, cv2.FILLED)
+                areas = cv2.warpPerspective(areas, matrix_p, (self.img_sz, self.img_sz))
+                areas = cv2.warpAffine(areas, matrix_r, (self.img_sz, self.img_sz))
 
-                _, image = cv2.threshold(
-                    cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-                )
-                area_contours, _ = cv2.findContours(image, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+                _, areas = cv2.threshold(areas, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                area_contours, _ = cv2.findContours(areas, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
                 area_contours.sort(key=lambda cnt: cv2.contourArea(cnt), reverse=True)
 
                 area_contours = [contour.squeeze() for contour in area_contours]
@@ -149,6 +159,8 @@ class Camera:
                 gray = cv2.cvtColor(frame_copy, cv2.COLOR_BGR2GRAY)
                 corners, ids, _ = aruco.detectMarkers(gray, self.aruco_dict, parameters=self.aruco_params)
                 cv2.drawContours(frame_copy, [self.lot, self.lane, self.spot1, self.spot2], -1, (255, 0, 0), 2)
+                cv2.drawContours(frame_copy, [self.lane], -1, (0, 255, 0), 2)
+                cv2.drawContours(frame_copy, [self.spot1, self.spot2], -1, (0, 0, 255), 2)
 
                 timestamp = rospy.get_time()
                 if ids is not None:
@@ -185,14 +197,9 @@ class Camera:
 
                 # cv2.imshow('camera_raw', frame)
                 cv2.imshow('camera', frame_copy)
-                if cv2.waitKey(1) & 0xFF == ord('q'):
-                    break
+                cv2.waitKey(1)
         self.cap.release()
         cv2.destroyAllWindows()
-
-        os.system('rosnode kill -a')
-        pid = os.popen('pgrep rosmaster').read().strip()
-        os.system('kill -9 %s' % pid)
 
 
 if __name__ == '__main__':
