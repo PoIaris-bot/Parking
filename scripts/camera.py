@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import os
 import cv2
+import json
 import rospy
 import numpy as np
 import cv2.aruco as aruco
 from pathlib import Path
 from std_srvs.srv import SetBool
 from std_msgs.msg import Float32MultiArray
+from skimage.morphology import skeletonize
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]
@@ -37,6 +38,55 @@ def calc_pose(corners):
     theta = np.arctan2(head[1] - rear[1], head[0] - rear[0])
     sz = np.linalg.norm(head - rear)
     return x, y, theta, sz
+
+
+def calc_lane_path(lane_contour, img_sz):
+    lane_area = np.zeros((img_sz, img_sz), dtype=np.uint8)
+    cv2.drawContours(lane_area, [lane_contour], -1, 255, cv2.FILLED)
+    _, lane_area = cv2.threshold(lane_area, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+
+    lane_area = cv2.morphologyEx(lane_area, cv2.MORPH_OPEN, np.ones((10, 10), dtype=np.uint8), iterations=5)
+    skeleton = skeletonize(lane_area, method='lee')
+    skeleton = np.where(skeleton > 0)
+    skeleton = np.column_stack((skeleton[1], skeleton[0]))
+    distance_matrix = np.linalg.norm(skeleton[:, None] - skeleton, axis=2).astype(np.int32)
+    end_idx = np.where((distance_matrix <= 1).sum(axis=0) == 2)[0].tolist()
+
+    last_idx = None
+    cur_idx = end_idx[0] if skeleton[end_idx[0]][0] > skeleton[end_idx[1]][0] else end_idx[1]
+    lane_path = [skeleton[cur_idx, :]]
+    for i in range(skeleton.shape[0] - 1):
+        dist = distance_matrix[cur_idx, :]
+        nearest = np.where(dist <= 1)[0].tolist()
+        if last_idx is not None:
+            nearest.remove(last_idx)
+        nearest.remove(cur_idx)
+        last_idx = cur_idx
+        cur_idx = nearest[0]
+        lane_path.append(skeleton[cur_idx, :])
+
+    return np.array(lane_path)
+
+
+def calc_lot_info(spot_contour):
+    x, y, w, h = cv2.boundingRect(spot_contour)
+    return (x + w // 2, y + h // 2), (w, h)
+
+
+def save_map_to_json(lot, lane, spot1, spot2):
+    lot['contour'], lane['path'], lane['contour'], spot1['contour'], spot2['contour'] = (
+        lot['contour'].tolist(), lane['path'].tolist(), lane['contour'].tolist(), spot1['contour'].tolist(),
+        spot2['contour'].tolist()
+    )
+
+    map_data = {
+        'lot': lot,
+        'lane': lane,
+        'spot1': spot1,
+        'spot2': spot2
+    }
+    with open(ROOT / 'map.json', 'w') as file:
+        json.dump(map_data, file, indent=4)
 
 
 class Camera:
@@ -140,14 +190,13 @@ class Camera:
                 area_contours = [contour.squeeze() for contour in area_contours]
                 if area_contours[2][0, 0] > area_contours[3][0, 0]:
                     area_contours[2], area_contours[3] = area_contours[3], area_contours[2]
-                lot, lane, spot1, spot2 = area_contours[:4]
+                lot, lane, spot1, spot2 = {}, {}, {}, {}
+                lot['contour'], lane['contour'], spot1['contour'], spot2['contour'] = area_contours[:4]
+                lane['path'] = calc_lane_path(lane['contour'], self.img_sz)
+                spot1['pose'], spot1['size'] = calc_lot_info(spot1['contour'])
+                spot2['pose'], spot2['size'] = calc_lot_info(spot2['contour'])
 
-                if not os.path.exists(ROOT / 'map'):
-                    os.makedirs(ROOT / 'map')
-                np.savetxt(ROOT / 'map/lot.txt', lot, '%d')
-                np.savetxt(ROOT / 'map/lane.txt', lane, '%d')
-                np.savetxt(ROOT / 'map/spot1.txt', spot1, '%d')
-                np.savetxt(ROOT / 'map/spot2.txt', spot2, '%d')
+                save_map_to_json(lot.copy(), lane.copy(), spot1.copy(), spot2.copy())
                 return matrix_p, matrix_r, lot, lane, spot1, spot2
 
     def run(self):
@@ -158,9 +207,12 @@ class Camera:
                 frame_copy = cv2.warpAffine(frame_copy, self.matrix_r, (self.img_sz, self.img_sz))
                 gray = cv2.cvtColor(frame_copy, cv2.COLOR_BGR2GRAY)
                 corners, ids, _ = aruco.detectMarkers(gray, self.aruco_dict, parameters=self.aruco_params)
-                cv2.drawContours(frame_copy, [self.lot, self.lane, self.spot1, self.spot2], -1, (255, 0, 0), 2)
-                cv2.drawContours(frame_copy, [self.lane], -1, (0, 255, 0), 2)
-                cv2.drawContours(frame_copy, [self.spot1, self.spot2], -1, (0, 0, 255), 2)
+
+                cv2.drawContours(frame_copy, [self.lot['contour']], -1, (255, 0, 0), 2)
+                cv2.drawContours(frame_copy, [self.lane['contour']], -1, (0, 255, 0), 2)
+                cv2.drawContours(frame_copy, [self.spot1['contour'], self.spot2['contour']], -1, (0, 0, 255), 2)
+                for i in range(self.lane['path'].shape[0]):
+                    cv2.circle(frame_copy, (self.lane['path'][i, 0], self.lane['path'][i, 1]), 1, (0, 255, 0), 1)
 
                 timestamp = rospy.get_time()
                 if ids is not None:

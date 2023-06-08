@@ -20,6 +20,10 @@ int left_dir = LEFT_FORWARD;
 int right_dir = RIGHT_FORWARD;
 String data = "";
 
+int constraint(int value, int lb, int ub) {
+  return (value > ub ? ub : (value < lb ? lb : value));
+}
+
 void setup()
 {
     Serial.begin(115200);
@@ -48,8 +52,8 @@ void loop() {
 
     if (data.length()) {
         // format: cmd[xxx][x][xx]dmc
-        int begin = data.beginOf("cmd");
-        int end = data.beginOf("dmc");
+        int begin = data.indexOf("cmd");
+        int end = data.indexOf("dmc");
         if (begin != -1 && end != -1 && end - begin == 9) {
             angle = atoi(data.substring(begin + 3, begin + 6).c_str());
             dir = atoi(data.substring(begin + 6, begin + 7).c_str());
@@ -60,10 +64,10 @@ void loop() {
     left_dir = (dir == 0 ? LEFT_FORWARD : LEFT_BACKWARD);
     right_dir = (dir == 0 ? RIGHT_FORWARD : RIGHT_BACKWARD);
 
-    servo.write(angle);
+    servo.write(constraint(angle, 75, 105));
     analogWrite(LEFT_DIR_PIN, left_dir);
     analogWrite(RIGHT_DIR_PIN, right_dir);
-    analogWrite(LEFT_MOTOR_PIN, speed);
-    analogWrite(RIGHT_MOTOR_PIN, speed);
+    analogWrite(LEFT_MOTOR_PIN, constraint(speed, 0, 30));
+    analogWrite(RIGHT_MOTOR_PIN, constraint(speed, 0, 30));
     delay(2);
 }
