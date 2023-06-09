@@ -64,140 +64,190 @@ def calc_lane_path(lane_contour, img_sz):
         last_idx = cur_idx
         cur_idx = nearest[0]
         lane_path.append(skeleton[cur_idx, :])
+    lane_path = np.array(lane_path)
+    sample_idx = np.linspace(0, lane_path.shape[0] - 1, int(50 / img_sz * 800), endpoint=True).astype(np.int32)
+    return lane_path[sample_idx, :]
 
-    return np.array(lane_path)
 
-
-def calc_lot_info(spot_contour):
+def calc_lot_center(spot_contour):
     x, y, w, h = cv2.boundingRect(spot_contour)
-    return (x + w // 2, y + h // 2), (w, h)
+    return x + w // 2, y + h // 2
 
 
-def save_map_to_json(lot, lane, spot1, spot2):
-    lot['contour'], lane['path'], lane['contour'], spot1['contour'], spot2['contour'] = (
-        lot['contour'].tolist(), lane['path'].tolist(), lane['contour'].tolist(), spot1['contour'].tolist(),
-        spot2['contour'].tolist()
+def calc_map(area_contours, img_sz):
+    lot_contour, lane_contour, spot1_contour, spot2_contour = area_contours
+    lane_path = calc_lane_path(lane_contour, img_sz)
+    spot1_point = calc_lot_center(spot1_contour)
+    spot2_point = calc_lot_center(spot2_contour)
+
+    entrance_point = lane_path[-1, :].tolist()
+    exit_point = lane_path[0, :].tolist()
+    switch1_point = [spot1_point[0], exit_point[1]]
+    switch2_point = [spot2_point[0], exit_point[1]]
+
+    delta_x1, delta_y1 = abs(entrance_point[0] - switch1_point[0]), abs(entrance_point[1] - switch1_point[1])
+    delta_x2, delta_y2 = abs(entrance_point[0] - switch2_point[0]), abs(entrance_point[1] - switch2_point[1])
+    y1 = np.linspace(0, delta_y1, int(20 / 800 * img_sz))
+    y2 = np.linspace(0, delta_y2, int(25 / 800 * img_sz))
+    x1 = delta_x1 / 2 * (np.cos(y1 / delta_y1 * np.pi) - 1)
+    x2 = delta_x2 / 2 * (np.cos(y2 / delta_y2 * np.pi) - 1)
+    spot1_in_fw_path = np.array([entrance_point[0] - x1, entrance_point[1] - y1]).T
+    spot2_in_fw_path = np.array([entrance_point[0] - x2, entrance_point[1] - y2]).T
+    spot1_in_bw_path = np.linspace(switch1_point, spot1_point, int(15 / 800 * img_sz))
+    spot2_in_bw_path = np.linspace(switch2_point, spot2_point, int(15 / 800 * img_sz))
+
+    r1 = abs(exit_point[0] - spot1_point[0])
+    angle1 = np.linspace(np.pi, np.pi / 2, int(15 / 800 * img_sz))
+    spot1_out_path1 = np.linspace(
+        spot1_point, [spot1_point[0], exit_point[1] + r1], int(5 / 800 * img_sz), endpoint=False
+    )
+    spot1_out_path2 = np.array([exit_point[0] + r1 * np.cos(angle1), exit_point[1] + r1 - r1 * np.sin(angle1)])
+    spot1_out_path = np.vstack([spot1_out_path1, spot1_out_path2.T])
+
+    r21 = abs(spot1_point[0] - spot2_point[0])
+    angle21 = np.linspace(0, np.pi / 2, int(10 / 800 * img_sz), endpoint=False)
+    spot2_out_path1 = np.array([spot1_point[0] + r21 * np.cos(angle21), spot1_point[1] - r21 * np.sin(angle21)])
+    r22 = abs((spot1_point[1] - r21 - exit_point[1]) / 2)
+    angle22 = np.linspace(3 * np.pi / 2, np.pi / 2, int(20 / 800 * img_sz), endpoint=False)
+    spot2_out_path2 = np.array([spot1_point[0] + r22 * np.cos(angle22), exit_point[1] + r22 - r22 * np.sin(angle22)])
+    spot2_out_path3 = np.linspace([spot1_point[0], exit_point[1]], exit_point, int(10 / 800 * img_sz))
+    spot2_out_path = np.vstack([spot2_out_path1.T, spot2_out_path2.T, spot2_out_path3])
+
+    return {
+        'contour': {
+            'lot': lot_contour,
+            'lane': lane_contour,
+            'spot1': spot1_contour,
+            'spot2': spot2_contour
+        },
+        'path': {
+            'lane': lane_path,
+            'spot1_in_fw': spot1_in_fw_path,
+            'spot1_in_bw': spot1_in_bw_path,
+            'spot1_out': spot1_out_path,
+            'spot2_in_fw': spot2_in_fw_path,
+            'spot2_in_bw': spot2_in_bw_path,
+            'spot2_out': spot2_out_path
+        }
+    }
+
+
+def save_map_to_json(parking_map):
+    parking_map_copy = {}
+    for key1 in parking_map.keys():
+        parking_map_copy[key1] = {}
+        for key2 in parking_map[key1].keys():
+            parking_map_copy[key1][key2] = parking_map[key1][key2].tolist()
+    with open(ROOT / 'map.json', 'w') as file:
+        json.dump(parking_map_copy, file, indent=4)
+
+
+def preprocess(frame, img_sz):
+    raw_sz = frame.shape[:2]
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    contours, _ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    contours.sort(key=lambda cnt: cv2.contourArea(cnt), reverse=True)
+
+    i, count = 0, 0
+    area_centers = []
+    area_contours = []
+    for i, contour in enumerate(contours):  # find parking lot and lane areas
+        x, y, w, h = cv2.boundingRect(contour)
+        if x not in [0, raw_sz[1] - w] and y not in [0, raw_sz[0] - h]:
+            area_contours.append(contour)
+            m = cv2.moments(contour)
+            xc = int(m['m10'] / m['m00'])
+            yc = int(m['m01'] / m['m00'])
+            area_centers.append([xc, yc])
+            count += 1
+        if count == 2:
+            break
+    convex_hull = np.zeros_like(gray, dtype=np.uint8)
+    convex_hull_contour = cv2.convexHull(np.vstack(area_contours))
+    cv2.drawContours(convex_hull, [convex_hull_contour], -1, 255, cv2.FILLED)
+
+    fld = cv2.ximgproc.createFastLineDetector()
+    lines = fld.detect(convex_hull).squeeze().tolist()
+    lines.sort(key=lambda line: np.sqrt((line[0] - line[2]) ** 2 + (line[1] - line[3]) ** 2), reverse=True)
+    lines = sorted(lines[:4], key=lambda line: np.arctan2(abs(line[1] - line[3]), abs(line[0] - line[2])))
+
+    pt1 = calc_line_cross_point(lines[0], lines[2])
+    pt2 = calc_line_cross_point(lines[0], lines[3])
+    pt3 = calc_line_cross_point(lines[1], lines[2])
+    pt4 = calc_line_cross_point(lines[1], lines[3])
+
+    pts = np.array([pt1, pt2, pt3, pt4])
+    pts = pts[pts[:, 0].argsort()]
+    top_left, bottom_left = (pts[0], pts[1]) if pts[0, 1] < pts[1, 1] else (pts[1], pts[0])
+    top_right, bottom_right = (pts[2], pts[3]) if pts[2, 1] < pts[3, 1] else (pts[3], pts[2])
+
+    matrix_p = cv2.getPerspectiveTransform(
+        np.float32([top_left, top_right, bottom_left, bottom_right]),
+        np.float32([[0, 0], [img_sz, 0], [0, img_sz], [img_sz, img_sz]])
     )
 
-    map_data = {
-        'lot': lot,
-        'lane': lane,
-        'spot1': spot1,
-        'spot2': spot2
-    }
-    with open(ROOT / 'map.json', 'w') as file:
-        json.dump(map_data, file, indent=4)
+    angle_dict = {1: 270, 2: 180, -1: 0, -2: 90}
+    angle = np.arctan2(area_centers[0][1] - area_centers[1][1], area_centers[1][0] - area_centers[0][0])
+    quadrant = int(angle / np.pi * 2) + (1 if angle > 0 else -1)
+
+    matrix_r = cv2.getRotationMatrix2D(
+        (img_sz // 2, img_sz // 2), angle_dict[quadrant], 1
+    )
+    for contour in contours[i + 1:]:  # find two parking spot areas
+        x, y, w, h = cv2.boundingRect(contour)
+        if x not in [0, raw_sz[0] - w] and y not in [0, raw_sz[1] - h]:
+            if cv2.pointPolygonTest(convex_hull_contour, (x + w // 2, y + h // 2), False) > 0:
+                if cv2.contourArea(contour) > w * h * 0.5:
+                    area_contours.append(contour)
+                    count += 1
+            if count == 4:
+                break
+
+    areas = np.zeros_like(gray, dtype=np.uint8)
+    cv2.drawContours(areas, area_contours, -1, 255, cv2.FILLED)
+    areas = cv2.warpPerspective(areas, matrix_p, (img_sz, img_sz))
+    areas = cv2.warpAffine(areas, matrix_r, (img_sz, img_sz))
+
+    _, areas = cv2.threshold(areas, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    area_contours, _ = cv2.findContours(areas, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    area_contours.sort(key=lambda cnt: cv2.contourArea(cnt), reverse=True)
+
+    area_contours = [contour.squeeze() for contour in area_contours]
+    if area_contours[2][0, 0] > area_contours[3][0, 0]:
+        area_contours[2], area_contours[3] = area_contours[3], area_contours[2]
+    parking_map = calc_map(area_contours[:4], img_sz)
+
+    return matrix_p, matrix_r, parking_map
 
 
 class Camera:
     def __init__(self):
         rospy.init_node('camera', anonymous=True)
 
-        self.pose_pub = rospy.Publisher('/pose', Float32MultiArray, queue_size=1)
-
         node_name = rospy.get_name()
         cam = rospy.get_param(node_name + '/cam')
+        self.img_sz = rospy.get_param(node_name + '/img_sz')
+        self.view_path = rospy.get_param(node_name + '/view_path')
+        self.view_contour = rospy.get_param(node_name + '/view_contour')
+
         self.cap = cv2.VideoCapture(cam, cv2.WINDOW_NORMAL)
         self.cap.set(cv2.CAP_PROP_FPS, 30)
 
-        self.raw_sz = (self.cap.get(cv2.CAP_PROP_FRAME_WIDTH), self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        self.img_sz = rospy.get_param(node_name + '/img_sz')
-
-        self.matrix_p, self.matrix_r, self.lot, self.lane, self.spot1, self.spot2 = self.preprocess()
-        rospy.wait_for_service('get_map')
-        rospy.ServiceProxy('get_map', SetBool)(True)
-
         self.aruco_dict = aruco.Dictionary_get(aruco.DICT_4X4_50)
         self.aruco_params = aruco.DetectorParameters_create()
+
         self.cars = {}
+        self.pose_pub = rospy.Publisher('/pose', Float32MultiArray, queue_size=1)
 
-        self.run()
-
-    def preprocess(self):
         ret = False
         while not ret:
             ret, frame = self.cap.read()
             if ret:
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-                contours, _ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-                contours.sort(key=lambda cnt: cv2.contourArea(cnt), reverse=True)
-
-                i, count = 0, 0
-                area_centers = []
-                area_contours = []
-                for i, contour in enumerate(contours):  # find parking lot and lane areas
-                    x, y, w, h = cv2.boundingRect(contour)
-                    if x not in [0, self.raw_sz[0] - w] and y not in [0, self.raw_sz[1] - h]:
-                        area_contours.append(contour)
-                        m = cv2.moments(contour)
-                        xc = int(m['m10'] / m['m00'])
-                        yc = int(m['m01'] / m['m00'])
-                        area_centers.append([xc, yc])
-                        count += 1
-                    if count == 2:
-                        break
-                convex_hull = np.zeros_like(gray, dtype=np.uint8)
-                convex_hull_contour = cv2.convexHull(np.vstack(area_contours))
-                cv2.drawContours(convex_hull, [convex_hull_contour], -1, 255, cv2.FILLED)
-
-                fld = cv2.ximgproc.createFastLineDetector()
-                lines = fld.detect(convex_hull).squeeze().tolist()
-                lines.sort(key=lambda line: np.sqrt((line[0] - line[2]) ** 2 + (line[1] - line[3]) ** 2), reverse=True)
-                lines = sorted(lines[:4], key=lambda line: np.arctan2(abs(line[1] - line[3]), abs(line[0] - line[2])))
-
-                pt1 = calc_line_cross_point(lines[0], lines[2])
-                pt2 = calc_line_cross_point(lines[0], lines[3])
-                pt3 = calc_line_cross_point(lines[1], lines[2])
-                pt4 = calc_line_cross_point(lines[1], lines[3])
-
-                pts = np.array([pt1, pt2, pt3, pt4])
-                pts = pts[pts[:, 0].argsort()]
-                top_left, bottom_left = (pts[0], pts[1]) if pts[0, 1] < pts[1, 1] else (pts[1], pts[0])
-                top_right, bottom_right = (pts[2], pts[3]) if pts[2, 1] < pts[3, 1] else (pts[3], pts[2])
-
-                matrix_p = cv2.getPerspectiveTransform(
-                    np.float32([top_left, top_right, bottom_left, bottom_right]),
-                    np.float32([[0, 0], [self.img_sz, 0], [0, self.img_sz], [self.img_sz, self.img_sz]])
-                )
-
-                angle_dict = {1: 270, 2: 180, -1: 0, -2: 90}
-                angle = np.arctan2(area_centers[0][1] - area_centers[1][1], area_centers[1][0] - area_centers[0][0])
-                quadrant = int(angle / np.pi * 2) + (1 if angle > 0 else -1)
-
-                matrix_r = cv2.getRotationMatrix2D(
-                    (self.img_sz // 2, self.img_sz // 2), angle_dict[quadrant], 1
-                )
-                for contour in contours[i + 1:]:  # find two parking spot areas
-                    x, y, w, h = cv2.boundingRect(contour)
-                    if x not in [0, self.raw_sz[0] - w] and y not in [0, self.raw_sz[1] - h]:
-                        if cv2.pointPolygonTest(convex_hull_contour, (x + w // 2, y + h // 2), False) > 0:
-                            if cv2.contourArea(contour) > w * h * 0.5:
-                                area_contours.append(contour)
-                                count += 1
-                        if count == 4:
-                            break
-
-                areas = np.zeros_like(gray, dtype=np.uint8)
-                cv2.drawContours(areas, area_contours, -1, 255, cv2.FILLED)
-                areas = cv2.warpPerspective(areas, matrix_p, (self.img_sz, self.img_sz))
-                areas = cv2.warpAffine(areas, matrix_r, (self.img_sz, self.img_sz))
-
-                _, areas = cv2.threshold(areas, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-                area_contours, _ = cv2.findContours(areas, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-                area_contours.sort(key=lambda cnt: cv2.contourArea(cnt), reverse=True)
-
-                area_contours = [contour.squeeze() for contour in area_contours]
-                if area_contours[2][0, 0] > area_contours[3][0, 0]:
-                    area_contours[2], area_contours[3] = area_contours[3], area_contours[2]
-                lot, lane, spot1, spot2 = {}, {}, {}, {}
-                lot['contour'], lane['contour'], spot1['contour'], spot2['contour'] = area_contours[:4]
-                lane['path'] = calc_lane_path(lane['contour'], self.img_sz)
-                spot1['pose'], spot1['size'] = calc_lot_info(spot1['contour'])
-                spot2['pose'], spot2['size'] = calc_lot_info(spot2['contour'])
-
-                save_map_to_json(lot.copy(), lane.copy(), spot1.copy(), spot2.copy())
-                return matrix_p, matrix_r, lot, lane, spot1, spot2
+                self.matrix_p, self.matrix_r, self.parking_map = preprocess(frame, self.img_sz)
+                save_map_to_json(self.parking_map)
+        rospy.wait_for_service('get_map')
+        rospy.ServiceProxy('get_map', SetBool)(True)
 
     def run(self):
         while not rospy.is_shutdown():
@@ -208,25 +258,38 @@ class Camera:
                 gray = cv2.cvtColor(frame_copy, cv2.COLOR_BGR2GRAY)
                 corners, ids, _ = aruco.detectMarkers(gray, self.aruco_dict, parameters=self.aruco_params)
 
-                cv2.drawContours(frame_copy, [self.lot['contour']], -1, (255, 0, 0), 2)
-                cv2.drawContours(frame_copy, [self.lane['contour']], -1, (0, 255, 0), 2)
-                cv2.drawContours(frame_copy, [self.spot1['contour'], self.spot2['contour']], -1, (0, 0, 255), 2)
-                for i in range(self.lane['path'].shape[0]):
-                    cv2.circle(frame_copy, (self.lane['path'][i, 0], self.lane['path'][i, 1]), 1, (0, 255, 0), 1)
+                if self.view_contour:
+                    for key in self.parking_map['contour'].keys():
+                        contour = self.parking_map['contour'][key]
+                        cv2.drawContours(frame_copy, [contour], -1, (255, 0, 0), 2)
+
+                if self.view_path:
+                    for key in self.parking_map['path'].keys():
+                        path = self.parking_map['path'][key]
+                        color = (0, 255, 255) if '1' in key else (0, 255, 0)
+                        for i in range(path.shape[0] - 1):
+                            cv2.line(
+                                frame_copy, (int(path[i, 0]), int(path[i, 1])),
+                                (int(path[i + 1, 0]), int(path[i + 1, 1])), color, 2, cv2.LINE_AA
+                            )
 
                 timestamp = rospy.get_time()
                 if ids is not None:
                     for i in range(len(ids)):
-                        x, y, theta, sz = calc_pose(corners[i].squeeze())
-                        cv2.arrowedLine(
-                            frame_copy, (int(x), int(y)), (int(x + sz * np.cos(theta)), int(y + sz * np.sin(theta))),
-                            (0, 0, 255), 5, 8, 0, 0.25
-                        )
-                        self.cars[int(ids[i])] = [x, y, theta, timestamp]
-                    aruco.drawDetectedMarkers(frame_copy, corners, ids, borderColor=(255, 0, 0))
+                        if int(ids[i]) <= 20:
+                            x, y, theta, sz = calc_pose(corners[i].squeeze())
+                            cv2.arrowedLine(
+                                frame_copy, (int(x), int(y)),
+                                (int(x + sz * np.cos(theta)), int(y + sz * np.sin(theta))), (255, 255, 0), 5, 8, 0, 0.25
+                            )
+                            cv2.putText(
+                                frame_copy, str(ids[i]), (int(x), int(y)), cv2.FONT_HERSHEY_SIMPLEX, 0.75,
+                                (0, 0, 255), 3
+                            )
+                            self.cars[int(ids[i])] = [x, y, theta, timestamp]
                 else:
                     cv2.putText(
-                        frame_copy, 'no car detected', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 0), 2
+                        frame_copy, 'no car detected', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2
                     )
 
                 if self.cars:
@@ -256,6 +319,6 @@ class Camera:
 
 if __name__ == '__main__':
     try:
-        Camera()
+        Camera().run()
     except rospy.ROSInterruptException:
         pass
