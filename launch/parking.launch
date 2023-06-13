@@ -16,10 +16,10 @@
         <param name="view_path" type="bool" value="$(arg view_path)"/>
         <param name="ids" type="string" value="$(arg ids)"/>
     </node>
-    <node pkg="parking" type="planner.py" name="planner" output="screen">
+    <node pkg="parking" type="controller.py" name="controller">
         <param name="img_sz" type="int" value="$(arg img_sz)"/>
     </node>
-    <node pkg="parking" type="commander.py" name="commander" output="screen">
+    <node pkg="parking" type="commander.py" name="commander">
         <param name="ids" type="string" value="$(arg ids)"/>
         <param name="port" type="string" value="$(arg port)"/>
         <param name="baud_rate" type="int" value="$(arg baud_rate)"/>

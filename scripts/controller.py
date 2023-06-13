@@ -6,9 +6,9 @@ from std_srvs.srv import SetBool, SetBoolResponse
 from tools import load_map_from_json, init_pos_check, StateMachine
 
 
-class Planner:
+class Controller:
     def __init__(self):
-        rospy.init_node('planner', anonymous=True)
+        rospy.init_node('controller', anonymous=True)
         rospy.Subscriber('/pose', Float32MultiArray, self.callback, queue_size=1)
 
         node_name = rospy.get_name()
@@ -29,17 +29,19 @@ class Planner:
                 cars[int(msg.data[i * 4])] = msg.data[i * 4 + 1: i * 4 + 4]
 
             if len(self.state_machines) != 3:
-                if not init_pos_check(self.parking_map, cars, self.img_sz / 800):
+                if not init_pos_check(self.parking_map, cars, self.img_sz / 800):  # check initial positions
                     rospy.loginfo('Please reset the cars')
                 else:
-                    for key in cars.keys():
+                    for key in cars.keys():  # initialize state machine for each car
                         self.state_machines[key] = StateMachine(cars[key], self.parking_map, self.img_sz)
                 return
 
             data = []
             for key in self.state_machines.keys():
+                # get states of other cars
                 states = {key: self.state_machines[key].state for key in self.state_machines.keys()}
                 states.pop(key)
+                # update state and get control command
                 data.append(int(key))
                 data += self.state_machines[key].update(cars[key], states.values())
             self.cmd_pub.publish(Float32MultiArray(data=data))
@@ -61,6 +63,6 @@ class Planner:
 
 if __name__ == '__main__':
     try:
-        Planner()
+        Controller()
     except rospy.ROSInterruptException:
         pass

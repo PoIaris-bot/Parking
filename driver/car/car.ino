@@ -1,19 +1,19 @@
 #include <Servo.h>
 #include <math.h>
-
+// pin definitions
 const int LEFT_MOTOR_PIN = 11;
 const int RIGHT_MOTOR_PIN = 6;
 const int LEFT_DIR_PIN = 5;
 const int RIGHT_DIR_PIN = 3;
 const int SERVO_PIN = 9;
-
+// direction definitions
 const int LEFT_FORWARD = 0;
 const int LEFT_BACKWARD = 255;
 const int RIGHT_FORWARD = 255;
 const int RIGHT_BACKWARD = 0;
-
-const int angle_offset = 6;
-const int speed_offset = 4;
+// offset definitions
+const int angle_offset = 0;  // 5: 0; 6: -2; 9: 6
+const int speed_offset = 1;  // 5: 1; 6: 3; 9: 4
 
 Servo servo;
 int dir = 0;
@@ -52,7 +52,8 @@ void loop() {
   Serial.flush();
 
   if (data.length()) {
-    // format: cmd[xxx][x][xx]dmc
+    // format: cmd[xxx][y][zz]dmc
+    // xxx: angle [75, 105]; y: direction {0: backward, 1: forward}; zz: speed [0, 30]
     int begin = data.indexOf("cmd");
     int end = data.indexOf("dmc");
     if (begin != -1 && end != -1 && end - begin == 9) {
@@ -68,6 +69,7 @@ void loop() {
   servo.write(constraint(angle, 75, 105) + angle_offset);
   analogWrite(LEFT_DIR_PIN, left_dir);
   analogWrite(RIGHT_DIR_PIN, right_dir);
+  // differential drive
   analogWrite(LEFT_MOTOR_PIN, constraint(speed - 15 * sin((angle - 90) / 180 * 3.14), 0, 30));
   analogWrite(RIGHT_MOTOR_PIN, constraint(speed + 15 * sin((angle - 90) / 180 * 3.14), 0, 30));
   delay(2);

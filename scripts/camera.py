@@ -12,7 +12,7 @@ from tools import calc_pose, preprocess, save_map_to_json
 class Camera:
     def __init__(self):
         rospy.init_node('camera', anonymous=True)
-
+        # get ros parameters
         node_name = rospy.get_name()
         cam = rospy.get_param(node_name + '/cam')
         self.img_sz = rospy.get_param(node_name + '/img_sz')
@@ -21,21 +21,24 @@ class Camera:
         self.view_contour = rospy.get_param(node_name + '/view_contour')
         self.ids = list(map(int, eval(rospy.get_param(node_name + '/ids'))))
 
-        self.cap = cv2.VideoCapture(cam)
-        self.cap.set(cv2.CAP_PROP_FPS, 30)
+        self.cap = cv2.VideoCapture(cam)  # open camera
+        self.cap.set(cv2.CAP_PROP_FPS, 30)  # set frame per second
 
+        # initialize ArUco
         self.aruco_dict = aruco.Dictionary_get(aruco.DICT_4X4_50)
         self.aruco_params = aruco.DetectorParameters_create()
 
         self.cars = {}
         self.pose_pub = rospy.Publisher('/pose', Float32MultiArray, queue_size=1)
 
+        # preprocess: perspective and rotation transform, calculate map contours and paths
         ret = False
         while not ret:
             ret, frame = self.cap.read()
             if ret:
                 self.matrix_p, self.matrix_r, self.parking_map = preprocess(frame, self.img_sz)
-                save_map_to_json(self.parking_map)
+                save_map_to_json(self.parking_map)  # save map
+        # ask node 'controller' to access map
         rospy.wait_for_service('get_map')
         get_map = rospy.ServiceProxy('get_map', SetBool)
         while not get_map(True):
@@ -50,12 +53,12 @@ class Camera:
                 gray = cv2.cvtColor(frame_copy, cv2.COLOR_BGR2GRAY)
                 corners, ids, _ = aruco.detectMarkers(gray, self.aruco_dict, parameters=self.aruco_params)
 
-                if self.view_contour:
+                if self.view_contour:  # draw contours
                     for key in self.parking_map['contour'].keys():
                         contour = self.parking_map['contour'][key]
                         cv2.drawContours(frame_copy, [contour], -1, (255, 0, 0), 2)
 
-                if self.view_path:
+                if self.view_path:  # draw paths
                     for key in self.parking_map['path'].keys():
                         path = self.parking_map['path'][key]
                         color = (0, 255, 255) if '1' in key else ((0, 255, 0) if '2' in key else (255, 255, 0))
@@ -65,7 +68,7 @@ class Camera:
                                 (int(path[i + 1, 0]), int(path[i + 1, 1])), color, 2, cv2.LINE_AA
                             )
 
-                if ids is not None:
+                if ids is not None:  # draw direction arrows and ids
                     for i in range(len(ids)):
                         if int(ids[i]) in self.ids:
                             x, y, theta, sz = calc_pose(corners[i].squeeze())
@@ -83,19 +86,12 @@ class Camera:
                         frame_copy, 'no car detected', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2
                     )
 
-                if self.cars:
+                if self.cars:  # publish pose topic
                     data = []
-                    info = ''
                     for key in list(self.cars.keys()):
                         x, y, theta = self.cars[key]
                         data += [key, x, y, theta]
-                        info += '\n  car [{:d}]\n    x:{:>7.2f}, y:{:>7.2f}, theta:{:6.2f}'.format(key, x, y, theta)
-                    info = '\n%d car(s) detected' % len(self.cars) + info + '\n' + '-' * 38
-                    rospy.loginfo(info)
                     self.pose_pub.publish(Float32MultiArray(data=data))
-                else:
-                    info = '\nno car detected\n' + '-' * 38
-                    rospy.loginfo(info)
 
                 if self.view_raw:
                     cv2.imshow('camera_raw', frame)

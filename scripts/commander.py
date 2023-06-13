@@ -9,7 +9,7 @@ from std_msgs.msg import Float32MultiArray
 class Commander:
     def __init__(self):
         rospy.init_node('commander', anonymous=True)
-
+        # initialize xbee
         node_name = rospy.get_name()
         port = rospy.get_param(node_name + '/port')
         baud_rate = rospy.get_param(node_name + '/baud_rate')
@@ -41,7 +41,8 @@ class Commander:
                     command += direction
                     command += '0' * (2 - len(speed)) + speed
                     command = 'cmd' + command + 'dmc'
-                    print(node_id, command)
+                    # format: cmd[xxx][y][zz]dmc
+                    # xxx: angle[75, 105]; y: direction {0: backward, 1: forward}; zz: speed[0, 30]
                     try:
                         self.xbee_device.send_data(self.nodes[node_id], command)
                     except TransmitException:
@@ -49,6 +50,7 @@ class Commander:
                     except ValueError:
                         pass
                 self.updated = False
+        # on shutdown: send stop command
         for _ in range(5):
             for node_id in self.nodes.keys():
                 try:

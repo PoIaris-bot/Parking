@@ -296,10 +296,13 @@ class StateMachine:
             '6-2': parking_map['path']['spot2_out'],
             '7': None
         }
-        self.brake = False
+        self.brake_flag = False
         self.brake_count = 0
+        self.out_flag = False
         self.img_sz = img_sz
         self.scale = img_sz / 800
+        self.fw_controller = PIDController(2, 0, 4)
+        self.bw_controller = PIDController(3, 0, 5)
 
         if cv2.pointPolygonTest(parking_map['contour']['spot1'], init_pose[:2], False) > 0:
             self.state = '5-1'
@@ -317,50 +320,52 @@ class StateMachine:
         if self.state == '1':
             if np.linalg.norm(self.paths[self.state][-1, :] - np.array([x, y])) < 50 * self.scale:
                 self.state = '2'
-                self.brake = False
+                self.brake_flag, self.brake_count = False, 0
         elif self.state == '2':
             if not {'3-1', '3-2', '4-1', '4-2', '6-1', '6-2'} & set(states):
                 if '5-1' not in states:
                     self.state = '3-1'
-                    self.brake = False
+                    self.brake_flag, self.brake_count = False, 0
                 elif '5-2' not in states:
                     self.state = '3-2'
-                    self.brake = False
+                    self.brake_flag, self.brake_count = False, 0
         elif self.state[0] == '3':
             if np.linalg.norm(self.paths[self.state][-1, :] - np.array([x, y])) < 50 * self.scale:
                 self.state = '4' + self.state[1:]
-                self.brake = False
+                self.brake_flag, self.brake_count = False, 0
         elif self.state[0] == '4':
             if abs(self.paths[self.state][-1, 1] - y) < 50 * self.scale:
                 self.state = '5' + self.state[1:]
-                self.brake = True
+                self.brake_flag, self.brake_count = True, 0
+                self.out_flag = False
         elif self.state[0] == '5':
+            self.out_flag = True
             if not {'3-1', '3-2', '4-1', '4-2', '6-1', '6-2'} & set(states):
                 if '7' not in states:
-                    if int(time.time()) % 2 != 0 and self.state[-1] == '1':
+                    if self.state[-1] == '1' and self.out_flag:
                         if '5-2' in states:
                             self.state = '6-1'
-                            self.brake = False
-                    if int(time.time()) % 2 == 0 and self.state[-1] == '2':
+                            self.brake_flag, self.brake_count = False, 0
+                    if self.state[-1] == '2':
                         if '5-1' in states:
                             self.state = '6-2'
-                            self.brake = False
+                            self.brake_flag, self.brake_count = False, 0
         elif self.state[0] == '6':
             if np.linalg.norm(self.paths[self.state][-1, :] - np.array([x, y])) < 50 * self.scale:
                 self.state = '7'
-                self.brake = False
+                self.brake_flag, self.brake_count = False, 0
         else:  # 7
             if '1' not in states:
                 self.state = '1'
-                self.brake = False
+                self.brake_flag, self.brake_count = False, 0
 
         path = self.paths[self.state]
         if path is None:
-            if self.brake:
+            if self.brake_flag:
                 self.brake_count += 1
                 if self.brake_count >= 10:
-                    self.brake = False
-                return [90, 1, 30]
+                    self.brake_flag = False
+                return [90, 1, 20]
             else:
                 return [90, 0, 0]
         else:
@@ -370,15 +375,33 @@ class StateMachine:
             distance = np.linalg.norm(np.array([[x, y]]) - path, axis=1)
             closest_idx = np.argmin(distance)
             try:
-                xd, yd = path[closest_idx + 2, :]
+                xd, yd = path[closest_idx + (2 if direction == 1 else 4), :]
+                d = distance[closest_idx + (2 if direction == 1 else 4)]
             except IndexError:
                 xd, yd = path[-1, :]
+                d = distance[-1]
             y = self.img_sz - y
             yd = self.img_sz - yd
 
             theta_d = np.arctan2(yd - y, xd - x)
             theta_e = remap_angle(theta_d - theta)
+            u = self.fw_controller.output(theta_e) if direction == 1 else self.bw_controller.output(-theta_e)
+            angle = 90 + 15 * np.tanh(u)
 
-            speed = 10
-            angle = 90 + 15 * np.tanh((2 * theta_e) if direction == 1 else (-0.7 * theta_e))
+            speed = 13 * np.tanh(0.05 * d)
             return [angle, direction, speed]
+
+
+class PIDController:
+    def __init__(self, kp, ki, kd):
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
+        self.e = 0
+        self.e_sum = 0
+
+    def output(self, e):
+        de = e - self.e
+        self.e_sum = self.e_sum + e
+        self.e = e
+        return self.kp * e + self.ki * self.e_sum + self.kd * de
