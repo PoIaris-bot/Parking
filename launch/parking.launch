@@ -3,20 +3,21 @@
     <arg name="img_sz" default="800"/>
     <arg name="view_raw" default="False"/>
     <arg name="view_path" default="True"/>
-    <arg name="view_contour" default="True"/>
-    <arg name="ids" default="['5', '6', '9']"/>
-    <arg name="port" default="/dev/ttyUSB0"/>
     <arg name="baud_rate" default="115200"/>
+    <arg name="view_contour" default="True"/>
+    <arg name="port" default="/dev/ttyUSB0"/>
+    <arg name="ids" default="['5', '6', '9']"/>
 
     <node pkg="parking" type="camera.py" name="camera">
         <param name="cam" type="int" value="$(arg cam)"/>
+        <param name="ids" type="string" value="$(arg ids)"/>
         <param name="img_sz" type="int" value="$(arg img_sz)"/>
         <param name="view_raw" type="bool" value="$(arg view_raw)"/>
-        <param name="view_contour" type="bool" value="$(arg view_contour)"/>
         <param name="view_path" type="bool" value="$(arg view_path)"/>
-        <param name="ids" type="string" value="$(arg ids)"/>
+        <param name="view_contour" type="bool" value="$(arg view_contour)"/>
     </node>
     <node pkg="parking" type="controller.py" name="controller">
+        <param name="ids" type="string" value="$(arg ids)"/>
         <param name="img_sz" type="int" value="$(arg img_sz)"/>
     </node>
     <node pkg="parking" type="commander.py" name="commander">

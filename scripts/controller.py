@@ -13,6 +13,7 @@ class Controller:
 
         node_name = rospy.get_name()
         self.img_sz = rospy.get_param(node_name + '/img_sz')
+        self.ids = eval(rospy.get_param(node_name + '/ids'))
 
         self.parking_map = None
         rospy.Service('get_map', SetBool, self.handler)
@@ -28,7 +29,7 @@ class Controller:
             for i in range(len(msg.data) // 4):
                 cars[int(msg.data[i * 4])] = msg.data[i * 4 + 1: i * 4 + 4]
 
-            if len(self.state_machines) != 3:
+            if len(self.state_machines) != len(self.ids):
                 if not init_pos_check(self.parking_map, cars, self.img_sz / 800):  # check initial positions
                     rospy.loginfo('Please reset the cars')
                 else:

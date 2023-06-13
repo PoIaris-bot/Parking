@@ -13,13 +13,13 @@ class Commander:
         node_name = rospy.get_name()
         port = rospy.get_param(node_name + '/port')
         baud_rate = rospy.get_param(node_name + '/baud_rate')
-        self.node_ids = eval(rospy.get_param(node_name + '/ids'))
+        self.ids = eval(rospy.get_param(node_name + '/ids'))
         self.nodes = {}
         self.xbee_device = XBeeDevice(port, baud_rate)
         self.xbee_device.open()
         xbee_network = self.xbee_device.get_network()
-        for node_id in self.node_ids:
-            self.nodes[node_id] = xbee_network.discover_device(node_id)
+        for node in self.ids:
+            self.nodes[node] = xbee_network.discover_device(node)
             rospy.sleep(0.2)
 
         rospy.Subscriber('/command', Float32MultiArray, self.callback, queue_size=1)

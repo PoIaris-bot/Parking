@@ -298,7 +298,7 @@ class StateMachine:
         }
         self.brake_flag = False
         self.brake_count = 0
-        self.out_flag = False
+
         self.img_sz = img_sz
         self.scale = img_sz / 800
         self.fw_controller = PIDController(2, 0, 4)
@@ -320,44 +320,33 @@ class StateMachine:
         if self.state == '1':
             if np.linalg.norm(self.paths[self.state][-1, :] - np.array([x, y])) < 50 * self.scale:
                 self.state = '2'
-                self.brake_flag, self.brake_count = False, 0
         elif self.state == '2':
             if not {'3-1', '3-2', '4-1', '4-2', '6-1', '6-2'} & set(states):
                 if '5-1' not in states:
                     self.state = '3-1'
-                    self.brake_flag, self.brake_count = False, 0
                 elif '5-2' not in states:
                     self.state = '3-2'
-                    self.brake_flag, self.brake_count = False, 0
         elif self.state[0] == '3':
             if np.linalg.norm(self.paths[self.state][-1, :] - np.array([x, y])) < 50 * self.scale:
                 self.state = '4' + self.state[1:]
-                self.brake_flag, self.brake_count = False, 0
         elif self.state[0] == '4':
             if abs(self.paths[self.state][-1, 1] - y) < 50 * self.scale:
                 self.state = '5' + self.state[1:]
                 self.brake_flag, self.brake_count = True, 0
-                self.out_flag = False
         elif self.state[0] == '5':
-            self.out_flag = True
             if not {'3-1', '3-2', '4-1', '4-2', '6-1', '6-2'} & set(states):
                 if '7' not in states:
-                    if self.state[-1] == '1' and self.out_flag:
-                        if '5-2' in states:
-                            self.state = '6-1'
-                            self.brake_flag, self.brake_count = False, 0
-                    if self.state[-1] == '2':
-                        if '5-1' in states:
-                            self.state = '6-2'
-                            self.brake_flag, self.brake_count = False, 0
+                    if self.state[-1] == '1':
+                        self.state = '6-1'
+                    else:  # 2
+                        self.state = '6-2'
+                    self.brake_flag, self.brake_count = False, 0
         elif self.state[0] == '6':
             if np.linalg.norm(self.paths[self.state][-1, :] - np.array([x, y])) < 50 * self.scale:
                 self.state = '7'
-                self.brake_flag, self.brake_count = False, 0
         else:  # 7
             if '1' not in states:
                 self.state = '1'
-                self.brake_flag, self.brake_count = False, 0
 
         path = self.paths[self.state]
         if path is None:
