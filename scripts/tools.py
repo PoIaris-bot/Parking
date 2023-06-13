@@ -364,8 +364,8 @@ class StateMachine:
             distance = np.linalg.norm(np.array([[x, y]]) - path, axis=1)
             closest_idx = np.argmin(distance)
             try:
-                xd, yd = path[closest_idx + (2 if direction == 1 else 4), :]
-                d = distance[closest_idx + (2 if direction == 1 else 4)]
+                xd, yd = path[closest_idx + (3 if direction == 1 else 4), :]
+                d = distance[closest_idx + (3 if direction == 1 else 4)]
             except IndexError:
                 xd, yd = path[-1, :]
                 d = distance[-1]
