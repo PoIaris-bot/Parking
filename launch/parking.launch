@@ -16,7 +16,7 @@
         <param name="view_path" type="bool" value="$(arg view_path)"/>
         <param name="view_contour" type="bool" value="$(arg view_contour)"/>
     </node>
-    <node pkg="parking" type="controller.py" name="controller">
+    <node pkg="parking" type="controller.py" name="controller" output="screen">
         <param name="ids" type="string" value="$(arg ids)"/>
         <param name="img_sz" type="int" value="$(arg img_sz)"/>
     </node>

@@ -12,8 +12,8 @@ const int LEFT_BACKWARD = 255;
 const int RIGHT_FORWARD = 255;
 const int RIGHT_BACKWARD = 0;
 // offset definitions
-const int angle_offset = 0;  // 5: 0; 6: -2; 9: 6
-const int speed_offset = 1;  // 5: 1; 6: 3; 9: 4
+const int angle_offset = 0;  // 1: 4; 4: 0; 5: 0; 6: -2; 7: -3; 9: 6
+const int speed_offset = -1;  // 1: -1; 4: 0; 5: 1; 6: 3; 7: 4; 9: 4
 
 Servo servo;
 int dir = 0;

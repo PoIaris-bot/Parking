@@ -1,5 +1,4 @@
 import cv2
-import time
 import json
 import numpy as np
 from pathlib import Path
@@ -15,12 +14,6 @@ def constraint(value, lb, ub):
     if value < lb:
         return lb
     return value
-
-
-def map_value(value, lb1, ub1, lb2, ub2):
-    value = constraint(value, lb1, ub1)
-    value = (value - lb1) / (ub1 - lb1) * (ub2 - lb2) + lb2
-    return constraint(value, lb2, ub2)
 
 
 def remap_angle(angle):
